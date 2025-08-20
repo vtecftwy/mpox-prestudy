@@ -46,13 +46,21 @@ DATASETS = {
 }
 
 # Utility functions to run a training run and store records
-def run_experiment(model, dls:ImageDataLoaders, dataset:str, n_epoch=200, freeze_epochs=1, lr=None, bs=16, suggested_lr='valley', save_records=True):
+def run_experiment(arch, train_ds:str, n_epoch=200, freeze_epochs=1, lr=None, bs=16, suggested_lr='valley', save_records=True):
     """Run a finetuning run and save loss curves, metrics, weights and metadata"""
+
+    # Create dataloaders for training
+    dls = ImageDataLoaders.from_folder(
+        path=DATASETS[train_ds]['path'],
+        valid_pct=0.2,
+        item_tfms=Resize(224),
+        bs=32
+    )
 
     # Create learning and set learning rate
     learn = vision_learner(
         dls,
-        model,
+        arch,
         loss_func=CrossEntropyLossFlat(),
         metrics=[ Recall(), Precision(),accuracy, F1Score()]
     )
@@ -68,7 +76,8 @@ def run_experiment(model, dls:ImageDataLoaders, dataset:str, n_epoch=200, freeze
     # Define fname for records
     uid = uuid4()
     saved = ROOT / "saved"
-    fname_seed = f"{model.__name__}_{n_epoch}_{bs}_{lr:<.1e}_{dataset}"
+    fname_seed = f"{arch.__name__}_{n_epoch}_{bs}_{lr:<.1e}_{train_ds}"
+    print(fname_seed)
     p2csv_metrics = saved / f"{fname_seed}_metrics_{uid}.csv"
     p2csv_losses = saved / f"{fname_seed}_losses_{uid}.csv"
     p2metadata = saved / f"{fname_seed}_metadata_{uid}.txt"
@@ -76,7 +85,7 @@ def run_experiment(model, dls:ImageDataLoaders, dataset:str, n_epoch=200, freeze
     p2curves = saved / f"{fname_seed}_curves_{uid}.png"
 
     # Fine tune the model and save metrics and losses
-    print(f"> Fine-tuning {model.__name__} on {dataset} for {n_epoch} epochs with batch size {bs}...")
+    print(f"> Fine-tuning {arch.__name__} on {train_ds} for {n_epoch} epochs with batch size {bs} ...")
     if save_records:
         callbacks = [ShowGraphCallback(), CSVLogger(fname=p2csv_metrics)]
     else:
@@ -93,12 +102,12 @@ def run_experiment(model, dls:ImageDataLoaders, dataset:str, n_epoch=200, freeze
         save_model(file=p2model, model=learn.model, opt=learn.opt, with_opt=True)
 
         stats = '\n\t'.join([f"{m.name}: {m.value.item() if isinstance(m.value, torch.Tensor) else m.value:.6f}" for m in learn.recorder.metrics])
-        txt = f"Finetuning Run Info:\n\nModel: {model.__name__}\nFreeze Epochs: {freeze_epochs}\nEpochs: {n_epoch}\nBatch Size: {bs}\nLearning Rate: {lr:<.1e}\nMetrics:\n\t{stats}\n\nUID: {uid}"
+        txt = f"Finetuning Run Info:\n\nModel: {arch.__name__}\nFreeze Epochs: {freeze_epochs}\nEpochs: {n_epoch}\nBatch Size: {bs}\nLearning Rate: {lr:<.1e}\nMetrics:\n\t{stats}\n\nUID: {uid}"
         p2metadata.write_text(txt)
 
         fig, ax = plt.subplots(figsize=(10, 5))
         o = learn.recorder.plot_loss(skip_start=3, with_valid=True, show_epochs=False, ax=ax)
-        ax.set_title(f"Training Curves:\n{model.__name__} with {dataset}. {n_epoch} epochs with lr={lr:<.1e}")
+        ax.set_title(f"Training Curves:\n{arch.__name__} with {train_ds}. {n_epoch} epochs with lr={lr:<.1e}")
         o.figure.savefig(p2curves, dpi=300)
 
         print(f"  Weights:  {p2model.name}\n  Metrics:  {p2csv_metrics.name}\n  Losses:   {p2csv_losses.name}\n  Metadata: {p2metadata.name}\n  Curves:   {p2curves.name}")
@@ -106,7 +115,7 @@ def run_experiment(model, dls:ImageDataLoaders, dataset:str, n_epoch=200, freeze
         print('\n\n> Metadata:')
         print(txt)
 
-    else: print('> Trining records not saved')
+    else: print('> Training records not saved')
 
     return learn
 
