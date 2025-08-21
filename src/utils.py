@@ -38,6 +38,11 @@ DATASETS = {
         'key': 'mpox-ds-2022',
         'path': ROOT / "data/Monkeypox-dataset-2022"
     },
+    'mpox-ds-2022-binary':{
+        'name': 'Mpox Dataset 2022 Binary',
+        'key': 'mpox-ds-2022-binary',
+        'path': ROOT / "data/Monkeypox-dataset-2022-binary"
+    },
     'mpox-ds-2022:mpox':{
         'name': 'Mpox Dataset 2022:MPOX',
         'key': 'mpox-ds-2022:mpox',
@@ -157,6 +162,7 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
 
     features = None
     labels = None
+    predictions = None
 
     for ds_idx, ds_path in enumerate(dataset_paths):
         images = get_image_files(ds_path)
@@ -174,26 +180,38 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
         
         print(f"> Extracting features for {nb_images:,d} images in {ds_path} in batches of {bs} images ...")
         for i, (imgs,lbls) in enumerate(dls[0]):
+            if imgs.shape[0] <=1: continue  # skip empty batches or single image batches
+            if imgs.shape[0] < bs: print(i, imgs.shape, lbls.shape, bs)
             if verbose: print(f"batch {i} for {ds_path} (bs = {bs})")
             x = cnn(imgs)
             x = clfr_layers[0](x)
             x = clfr_layers[1](x)
             x = x.detach().cpu()
+
+            preds_probs = learn.model(imgs)
+            preds = torch.argmax(preds_probs, dim=1)
+            
             # Store features
             features = x if features is None else torch.cat((features, x), dim=0)
             if verbose: print(f"features shape: {features.shape}")
+
             # Store integer labels
             lbls = lbls.detach().cpu()
             offset = 4
             labels = lbls + offset*ds_idx if labels is None else torch.cat((labels, lbls+offset*ds_idx), dim=0)
+
+            # Store integer predictions
+            preds = preds.detach().cpu()
+            predictions = preds + offset*ds_idx if predictions is None else torch.cat((predictions, preds+offset*ds_idx), dim=0)
             if verbose: print('---')
     
     features = features.numpy()
     labels = labels.numpy()
+    predictions = predictions.numpy()
 
-    return features, labels
+    return features, labels, predictions
 
-def plot_features(embedding, labels, datasets_dict, ax=None):
+def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='all', ax=None, listofcolors=None, title=None):
     """Plot the image feature on a UMAP generated 2D map"""
     training_ds:str = datasets_dict['training']
     datasets:list[str] = datasets_dict['features']
@@ -201,12 +219,31 @@ def plot_features(embedding, labels, datasets_dict, ax=None):
     # Set color map for each datasets
     # TODO: update this to make color selection more flexible: assume 2 classes for each dataset and n datasets
     plt.style.use('default')
-    # https://matplotlib.org/stable/gallery/color/named_colors.html
-    # colors = ['tab:blue', 'tab:cyan', 'black', 'tab:red', 'tab:pink']  # 5 distinct colors
-    # colors = ['deepskyblue', 'royalblue', 'sandybrown', 'chocolate', 'forestgreen']  # 5 distinct colors
-    colors = ['royalblue', 'deepskyblue', 'darkgoldenrod', 'tan', 'forestgreen']  # 5 distinct colors
+    colors = [
+        'navy',
+        'deepskyblue',
+        'darkviolet',
+        'violet',
+        'darkolivegreen',
+        'lime',
+        'sienna',
+        'tan',
+        'firebrick',
+        'lightcoral',
+        'gold',
+        'yellow',
+    ]
     color_map = dict(zip(np.unique(labels), colors))
     label_colors = [color_map[v] for v in labels]
+
+    if preds_to_show == 'correct':
+        pred_is_correct = labels == predictions
+    elif preds_to_show == 'incorrect':
+        pred_is_correct = labels != predictions
+    elif preds_to_show == 'all':
+        pred_is_correct = np.ones_like(labels, dtype=bool)
+    else: 
+        raise ValueError(f"preds_to_show must be 'all', 'correct', 'incorrect': {preds_to_show}")
 
     if ax is None:
         fig, ax = plt.subplots(figsize=(6,6))
@@ -214,10 +251,10 @@ def plot_features(embedding, labels, datasets_dict, ax=None):
     else:
         show_plot = False
     ax.scatter(
-        embedding[:, 0],
-        embedding[:, 1],
-        c=label_colors,
-        alpha=0.8
+        embedding[pred_is_correct, 0],
+        embedding[pred_is_correct, 1],
+        c=np.array(label_colors)[pred_is_correct],
+        alpha=0.66
     )
 
     import matplotlib.patches as mpatches
@@ -226,7 +263,8 @@ def plot_features(embedding, labels, datasets_dict, ax=None):
 
     ds_names = [DATASETS[k]['name'] for k in datasets]
     trained_txt = f"trained with {training_ds}" if training_ds else ""
-    title = f"UMAP projection of CNN final feature vectors {trained_txt}. \nDatasets: {ds_names[0]} (blues); {ds_names[1]} (browns); {ds_names[2]} (greens)"
+    if title is None: 
+        title = f"UMAP projection of CNN final feature vectors {trained_txt}. \nDatasets: {ds_names[0]} (blues); {ds_names[1]} (browns); {ds_names[2]} (greens)"
     ax.set_title(title, fontsize=10)
     ax.axis('on')
     ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
