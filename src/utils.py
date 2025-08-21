@@ -211,7 +211,7 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
 
     return features, labels, predictions
 
-def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='all', ax=None, listofcolors=None, title=None):
+def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='all', ax=None, colors=None, title=None):
     """Plot the image feature on a UMAP generated 2D map"""
     training_ds:str = datasets_dict['training']
     datasets:list[str] = datasets_dict['features']
@@ -219,20 +219,21 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
     # Set color map for each datasets
     # TODO: update this to make color selection more flexible: assume 2 classes for each dataset and n datasets
     plt.style.use('default')
-    colors = [
-        'navy',
-        'deepskyblue',
-        'darkviolet',
-        'violet',
-        'darkolivegreen',
-        'lime',
-        'sienna',
-        'tan',
-        'firebrick',
-        'lightcoral',
-        'gold',
-        'yellow',
-    ]
+    if colors is None:
+        colors = [
+            'navy',
+            'deepskyblue',
+            'darkviolet',
+            'violet',
+            'darkolivegreen',
+            'lime',
+            'sienna',
+            'tan',
+            'firebrick',
+            'lightcoral',
+            'gold',
+            'yellow',
+        ]
     color_map = dict(zip(np.unique(labels), colors))
     label_colors = [color_map[v] for v in labels]
 
@@ -258,7 +259,8 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
     )
 
     import matplotlib.patches as mpatches
-    handles = [mpatches.Patch(color=color, label=str(label)) for label, color in color_map.items()]
+    lbl2class = ['mpox', 'others']*10
+    handles = [mpatches.Patch(color=color, label=str(lbl2class[label])) for label, color in color_map.items()]
     ax.legend(handles=handles, title="Label Colors", loc='best')
 
     ds_names = [DATASETS[k]['name'] for k in datasets]
