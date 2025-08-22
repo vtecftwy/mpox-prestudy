@@ -144,9 +144,11 @@ def run_experiment(arch, train_ds:str, n_epoch=200, freeze_epochs=1, lr=None, bs
     return learn
 
 # Utility functions to extract features from images and plot them
-def create_image_features(saved_model_file, selected_arch, dataset_paths:list[str], verbose=False):
+def create_image_features(selected_arch, saved_model_file=None, dataset_paths:list[str]=None, verbose=False):
     """Create image features for all images in dataset paths, using a pre-trained model."""
     # Create dls for first dataset
+    if dataset_paths is None or len(dataset_paths) == 0:
+        dataset_paths = [DATASETS['msld-v1']['path'], DATASETS['msid-binary']['path']]
     ds_path = dataset_paths[0]
     dblock = DataBlock(
         blocks=[ImageBlock, CategoryBlock],
@@ -160,15 +162,18 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
         bs=4, 
         shuffle=False
     )
-    # Create a model and load the weights
+    # Create a model and load the fine-tuned models weights if any
     learn = vision_learner(
         dls,
         selected_arch,
         loss_func=CrossEntropyLossFlat(),
         metrics=[Recall(), Precision(), accuracy, F1Score()]
     )
-    print(f"Extracting image features using model {saved_model_file.name} ...")
-    load_model(file=saved_model_file, model=learn.model,opt=learn.opt, with_opt=False)
+    if saved_model_file is not None:
+        load_model(file=saved_model_file, model=learn.model,opt=learn.opt, with_opt=False)
+        print(f"Extracting image features using {selected_arch.__name__} and weights {saved_model_file.name} ...")
+    else:
+        print(f"Extracting image features using {selected_arch.__name__} and ImageNet pretrained weights ...")
 
     # Extract the CNN and the classifier's layers
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -177,8 +182,7 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
     clfr = clfr.to(device)
     clfr_layers = list(clfr.children())
 
-    # Create feature vectors and labels for images in each datasets
-
+    # Create feature vector, true labels and prediction for images in each datasets. Keep indexes of data point for each dataset
     features = None
     labels = None
     predictions = None
@@ -188,10 +192,6 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
         images = get_image_files(ds_path)
         nb_images = len(images)
         if verbose: print(f"{nb_images} images found in {ds_path}.")
-        # optmize bs to miss the least images in incomplete batch
-        # bss = [8,16,32,64,128]
-        # bss_sorted = sorted(bss, key=lambda x: (nb_images % x, -x))
-        # bs = bss_sorted[0]
         bs = 32
         dls = dblock.dataloaders(
             ds_path, 
@@ -201,8 +201,7 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
         
         print(f"> Extracting features for {nb_images:,d} images in {ds_path} in batches of {bs} images ...")
         for i, (imgs,lbls) in enumerate(dls[0]):
-            if imgs.shape[0] <=1: continue  # skip empty batches or single image batches
-            # if imgs.shape[0] < bs: print(i, imgs.shape, lbls.shape, bs)
+            if imgs.shape[0] <=1: continue  # skip empty batches or single image batches, as it trows an error
             if verbose: print(f"batch {i} for {ds_path} (bs = {bs})")
             x = cnn(imgs)
             x = clfr_layers[0](x)
@@ -253,7 +252,7 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
             'navy','deepskyblue','darkviolet','violet','darkolivegreen','lime','sienna','tan','firebrick','lightcoral','gold','yellow',
         ]
     color_map = dict(zip(np.unique(labels), colors))
-    label_colors = [color_map[v] for v in labels]
+    label_colors = np.array([color_map[v] for v in labels])
 
     if preds_to_show == 'correct':
         pred_is_correct = labels == predictions
@@ -269,12 +268,33 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
         show_plot = True
     else:
         show_plot = False
+    # ax.scatter(
+    #     embedding[pred_is_correct, 0],
+    #     embedding[pred_is_correct, 1],
+    #     c=label_colors[pred_is_correct],
+    #     marker=markers[pred_is_correct],
+    #     alpha=0.66
+    # )
+
+    correct_preds = labels == predictions
     ax.scatter(
-        embedding[pred_is_correct, 0],
-        embedding[pred_is_correct, 1],
-        c=np.array(label_colors)[pred_is_correct],
-        alpha=0.66
+        embedding[(pred_is_correct) & (correct_preds), 0],
+        embedding[(pred_is_correct) & (correct_preds), 1],
+        c=label_colors[(pred_is_correct) & (correct_preds)],
+        marker='+',
+        alpha=0.66,
+        # label='Correct'
     )
+    # Plot incorrect predictions
+    ax.scatter(
+        embedding[(pred_is_correct) & (~correct_preds), 0],
+        embedding[(pred_is_correct) & (~correct_preds), 1],
+        c=label_colors[(pred_is_correct) & (~correct_preds)],
+        marker='x',
+        alpha=0.66,
+        # label='Incorrect'
+    )
+
 
     lbl2class = ['mpox', 'others']*10
     handles = [mpatches.Patch(color=color, label=str(lbl2class[label])) for label, color in color_map.items()]
