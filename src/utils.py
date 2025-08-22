@@ -1,6 +1,9 @@
+import gc
 import pandas as pd
 import re
 import warnings
+import matplotlib.patches as mpatches
+
 
 from IPython.display import display, Markdown
 from fastai.vision.all import *
@@ -9,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 warnings.filterwarnings('ignore', category=FutureWarning, module='fastai')
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 ROOT = Path(__file__).parent.parent
 
@@ -49,6 +53,21 @@ DATASETS = {
         'path': ROOT / "data/Monkeypox-dataset-2022/Monkeypox"
     }
 }
+
+
+def clear_cuda_objects():
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) and obj.is_cuda:
+                del obj
+            elif hasattr(obj, 'cuda') and callable(getattr(obj, 'cuda', None)):
+                # For models or modules on CUDA
+                if next(obj.parameters(), None) is not None and next(obj.parameters()).is_cuda:
+                    del obj
+        except Exception:
+            pass
+    torch.cuda.empty_cache()
+    print('All objects on GPU deleted !')
 
 # Utility functions to run a training run and store records
 def run_experiment(arch, train_ds:str, n_epoch=200, freeze_epochs=1, lr=None, bs=16, suggested_lr='valley', save_records=True):
@@ -163,15 +182,17 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
     features = None
     labels = None
     predictions = None
+    dataset_idxs = []
 
     for ds_idx, ds_path in enumerate(dataset_paths):
         images = get_image_files(ds_path)
         nb_images = len(images)
         if verbose: print(f"{nb_images} images found in {ds_path}.")
         # optmize bs to miss the least images in incomplete batch
-        bss = [8,16,32,64,128]
-        bss_sorted = sorted(bss, key=lambda x: (nb_images % x, -x))
-        bs = bss_sorted[0]
+        # bss = [8,16,32,64,128]
+        # bss_sorted = sorted(bss, key=lambda x: (nb_images % x, -x))
+        # bs = bss_sorted[0]
+        bs = 32
         dls = dblock.dataloaders(
             ds_path, 
             bs=bs, 
@@ -181,7 +202,7 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
         print(f"> Extracting features for {nb_images:,d} images in {ds_path} in batches of {bs} images ...")
         for i, (imgs,lbls) in enumerate(dls[0]):
             if imgs.shape[0] <=1: continue  # skip empty batches or single image batches
-            if imgs.shape[0] < bs: print(i, imgs.shape, lbls.shape, bs)
+            # if imgs.shape[0] < bs: print(i, imgs.shape, lbls.shape, bs)
             if verbose: print(f"batch {i} for {ds_path} (bs = {bs})")
             x = cnn(imgs)
             x = clfr_layers[0](x)
@@ -204,35 +225,32 @@ def create_image_features(saved_model_file, selected_arch, dataset_paths:list[st
             preds = preds.detach().cpu()
             predictions = preds + offset*ds_idx if predictions is None else torch.cat((predictions, preds+offset*ds_idx), dim=0)
             if verbose: print('---')
-    
+        dataset_idxs.append((0 if dataset_idxs==[] else dataset_idxs[-1][-1], len(labels)))
+
     features = features.numpy()
     labels = labels.numpy()
     predictions = predictions.numpy()
 
-    return features, labels, predictions
+    torch.cuda.empty_cache()
+
+    return features, labels, predictions, dataset_idxs
 
 def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='all', ax=None, colors=None, title=None):
     """Plot the image feature on a UMAP generated 2D map"""
     training_ds:str = datasets_dict['training']
     datasets:list[str] = datasets_dict['features']
+    to_plot:list[str] = datasets_dict.get('to_plot', ((0,len(labels)),)) # use full index range when to_plot is not defined
+
+    # Only keep those datapoints belonging to datasets to plot
+    embedding = np.concatenate([embedding[start:end] for start, end in to_plot], axis=0)
+    labels = np.concatenate([labels[start:end] for start, end in to_plot], axis=0)
+    predictions = np.concatenate([predictions[start:end] for start, end in to_plot], axis=0)
 
     # Set color map for each datasets
-    # TODO: update this to make color selection more flexible: assume 2 classes for each dataset and n datasets
     plt.style.use('default')
     if colors is None:
         colors = [
-            'navy',
-            'deepskyblue',
-            'darkviolet',
-            'violet',
-            'darkolivegreen',
-            'lime',
-            'sienna',
-            'tan',
-            'firebrick',
-            'lightcoral',
-            'gold',
-            'yellow',
+            'navy','deepskyblue','darkviolet','violet','darkolivegreen','lime','sienna','tan','firebrick','lightcoral','gold','yellow',
         ]
     color_map = dict(zip(np.unique(labels), colors))
     label_colors = [color_map[v] for v in labels]
@@ -258,7 +276,6 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
         alpha=0.66
     )
 
-    import matplotlib.patches as mpatches
     lbl2class = ['mpox', 'others']*10
     handles = [mpatches.Patch(color=color, label=str(lbl2class[label])) for label, color in color_map.items()]
     ax.legend(handles=handles, title="Label Colors", loc='best')
@@ -266,7 +283,7 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
     ds_names = [DATASETS[k]['name'] for k in datasets]
     trained_txt = f"trained with {training_ds}" if training_ds else ""
     if title is None: 
-        title = f"UMAP projection of CNN final feature vectors {trained_txt}. \nDatasets: {ds_names[0]} (blues); {ds_names[1]} (browns); {ds_names[2]} (greens)"
+        title = f"UMAP projection of CNN final feature vectors {trained_txt}. \nDatasets: {ds_names[0]} (blues); {ds_names[1]} (violets); {ds_names[2]} (greens)"
     ax.set_title(title, fontsize=10)
     ax.axis('on')
     ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
