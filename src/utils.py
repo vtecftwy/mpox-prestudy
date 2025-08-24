@@ -101,7 +101,7 @@ def run_experiment(arch, train_ds:str, n_epoch=200, freeze_epochs=1, lr=None, bs
     uid = uuid4()
     saved = ROOT / "saved"
     fname_seed = f"{arch.__name__}_{n_epoch}_{bs}_{lr:<.1e}_{train_ds}"
-    print(fname_seed)
+    print(f"  records will be saved as {fname_seed}_xxxx_{uid}.xxx")
     p2csv_metrics = saved / f"{fname_seed}_metrics_{uid}.csv"
     p2csv_losses = saved / f"{fname_seed}_losses_{uid}.csv"
     p2metadata = saved / f"{fname_seed}_metadata_{uid}.txt"
@@ -358,10 +358,9 @@ def validate_models(arch, training_ds, validation_ds, saved_model_files:list[Pat
         p2metadata= dir_path / f"{meta['model']}_{meta['epoch']}_{meta['bs']}_{meta['lr']}_{meta['ds']}_metadata_{meta['uid']}.txt"
         metadata_txt = p2metadata.read_text()
         pattern = re.compile(r".*\n.*\n.*\n.*\n.*\n.*\n.*\n\trecall_score:\s(?P<train_val_recall>[\d.]*)\n\tprecision_score:\s(?P<train_val_precision>[\d.]*)\n\taccuracy:\s(?P<train_val_accuracy>[\d.]*)\n\tf1_score:\s(?P<train_val_f1>[\d.]*)")
-        m = pattern.match(metadata_txt)
+        pattern = re.compile(r"\trecall_score:\s(?P<train_val_recall>[\d.]*)\n\tprecision_score:\s(?P<train_val_precision>[\d.]*)\n\taccuracy:\s(?P<train_val_accuracy>[\d.]*)\n\tf1_score:\s(?P<train_val_f1>[\d.]*)")
+        m = pattern.search(metadata_txt)
         training_results[mfname.stem] = m.groupdict() if m else {}
-
-        # Validate model with test set
         val_res = learn.validate()
         validation_results[mfname.stem] = val_res
 
@@ -392,6 +391,7 @@ def plot_training_and_validation_metrics(training_results_df, validation_results
 
     training_ds = training_results_df.index.name
     validation_ds = validation_results_df.index.name
+    # print(f"Plotting training metrics on {training_ds} and validation metrics on {validation_ds}")
 
     metrics = ['recall', 'precision', 'accuracy', 'f1']
     x = np.arange(len(df.index))  # model numbers
@@ -426,28 +426,6 @@ def parse_saved_fnames(p2file:Path):
 
 
 if __name__ == "__main__":
-    # p2images = ROOT / 'data/MSLD-v1/Original'
-    # dls = ImageDataLoaders.from_folder(
-    #     path=p2images,
-    #     valid_pct=0.2,
-    #     item_tfms=Resize(224),
-    #     bs=4
-    # )
 
-    # learn = run_experiment(
-    #     resnet18, 
-    #     dls=dls, 
-    #     dataset='blablabla',
-    #     freeze_epochs=1, 
-    #     n_epoch=4, 
-    #     lr=1e-3, 
-    #     bs=8, 
-    #     suggested_lr='minimum', 
-    #     save_records=True
-    #     )
-
-    training_ds = 'msld-v1'
-    validation_ds = 'msld-v3'
-    if training_ds not in DATASETS.keys(): raise ValueError(f"Unknown training dataset: {training_ds}")
-    if validation_ds not in DATASETS.keys(): raise ValueError(f"Unknown validation dataset: {validation_ds}")
+    
     print('Done')
