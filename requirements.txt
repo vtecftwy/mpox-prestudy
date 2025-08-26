@@ -12,3 +12,4 @@ pandas
 fastai
 eccore
 giotto-tda
+umap-learn
