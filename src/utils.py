@@ -4,12 +4,20 @@ import re
 import warnings
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-
+import matplotlib.colors as mcolors
+import plotly.graph_objects as go
+import umap
 
 from IPython.display import display, Markdown
 from fastai.vision.all import *
 from fastai.vision.all import resnet18
+from gtda.mapper import CubicalCover, Eccentricity, FirstSimpleGap, make_mapper_pipeline, plot_static_mapper_graph
+
 from pathlib import Path
+from sklearn.pipeline import Pipeline as skPipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import DBSCAN, AgglomerativeClustering
 from uuid import uuid4
 
 warnings.filterwarnings('ignore', category=FutureWarning, module='fastai')
@@ -55,6 +63,70 @@ DATASETS = {
     }
 }
 
+# COLORS = [
+#             'navy','deepskyblue','darkviolet','violet','darkolivegreen','lime','sienna','tan','firebrick','lightcoral','gold','yellow',
+#         ]
+
+COLORS = [
+    # Red
+    "firebrick", "lightcoral",
+    # Yellow-Green
+    "yellowgreen", "darkolivegreen",
+    # Blue
+    "deepskyblue", "navy",
+    # Purple
+    "darkviolet", "violet",
+    # Pink
+    "hotpink", "deeppink",
+    # Orange
+    "darkorange", "gold",
+    # Green
+    "limegreen", "palegreen",
+    # Brown
+    "sienna", "tan",
+    # Teal
+    "teal", "turquoise",
+    # Gray
+    "dimgray", "silver",
+    # Olive
+    "olive", "olivedrab",
+    # Orange-Red
+    "orangered", "tomato"
+]
+
+TDA_MAPPER_FUNCTIONS = {
+    "filters" : {
+        'pca': {
+            'name': 'PCA', 
+            'fn': PCA(n_components=2)
+            },  
+        'scale_pca': {
+            'name': 'Scale + PCA', 
+            'fn': skPipeline([
+                ('scaler', StandardScaler()),
+                ('pca', PCA(n_components=2))
+                ])
+            },
+        'umap': {
+            'name': 'UMAP', 
+            'fn': skPipeline([
+                ('umap', umap.UMAP(n_neighbors=100, metric='cosine', min_dist=0.75, n_components=2, n_jobs=-1))
+                ])
+            },
+        'eccentricity': {
+            'name': 'Eccentricity', 
+            'fn': Eccentricity()
+            }
+    },
+    'cover': {
+        'cubical': {'name': 'Cubical', 'fn': CubicalCover(n_intervals=10, overlap_frac=0.3)}
+        },
+    'clusterer': {
+        'dbscan': {'name': 'DBSCAN', 'fn': DBSCAN(eps=0.1, min_samples=3)},
+        'agglo': {'name': 'Agglomerative Clustering', 'fn': AgglomerativeClustering(n_clusters=None, distance_threshold=0.1)},
+        'gap': {'name': 'Gap', 'fn': FirstSimpleGap()}
+    }
+}
 
 def clear_cuda_objects():
     for obj in gc.get_objects():
@@ -249,9 +321,7 @@ def plot_features(embedding, labels, predictions, datasets_dict, preds_to_show='
     # Set color map for each datasets
     plt.style.use('default')
     if colors is None:
-        colors = [
-            'navy','deepskyblue','darkviolet','violet','darkolivegreen','lime','sienna','tan','firebrick','lightcoral','gold','yellow',
-        ]
+        colors = COLORS
     color_map = dict(zip(np.unique(labels), colors))
     label_colors = np.array([color_map[v] for v in labels])
 
@@ -412,6 +482,73 @@ def plot_training_and_validation_metrics(training_results_df, validation_results
     plt.tight_layout()
     plt.show()
 
+# Utility functions for TDA
+def plot_mapper(data, ds_labels, filter_key=None, cover_key=None, clusterer_key=None, title=None, show_plot=True, colors=None):
+    if filter_key is None: filter_key = 'pca'
+    if cover_key is None: cover_key = 'cubical'
+    if clusterer_key is None: clusterer_key = 'dbscan'
+    pipe = make_mapper_pipeline(
+        filter_func=TDA_MAPPER_FUNCTIONS['filters'][filter_key]['fn'],
+        cover=TDA_MAPPER_FUNCTIONS['cover'][cover_key]['fn'],
+        clusterer=TDA_MAPPER_FUNCTIONS['clusterer'][clusterer_key]['fn'],
+        verbose=False,
+        n_jobs=-1
+    )
+    fig = plot_static_mapper_graph(pipe, data, color_data=ds_labels)
+    
+    if title is None: title = f"TDA Mapper: {TDA_MAPPER_FUNCTIONS['filters'][filter_key]['name']}|{TDA_MAPPER_FUNCTIONS['clusterer'][clusterer_key]['name']}"
+
+    fig.update_layout(title=title)
+
+    css_colors = colors if colors else COLORS
+    labels_unique = sorted(set(ds_labels))
+    # Map each unique label to a CSS color (cycle if more labels than colors)
+    color_map = {label: css_colors[i % len(css_colors)] for i, label in enumerate(labels_unique)}
+    color_idx_map = {label: i for i, label in enumerate(labels_unique)}
+
+    # Custom colorscale for Plotly: list of (normalized_value, color)
+    custom_colorscale = []
+    for i, label in enumerate(labels_unique):
+        frac = i / max(len(labels_unique)-1, 1)
+        custom_colorscale.append((frac, mcolors.CSS4_COLORS[color_map[label]]))
+
+    for trace in fig.data:
+        if hasattr(trace, 'marker') and hasattr(trace.marker, 'color') and getattr(trace.marker, 'color') is not None:
+            trace_color_data = trace.marker.color
+            # Map each label to its index for colorscale
+            trace.marker.color = [color_idx_map.get(int(val), -1) for val in trace_color_data]
+            trace.marker.colorscale = custom_colorscale
+            trace.marker.colorbar = None
+            trace.marker.showscale = False
+
+    # Add a custom colorbar trace
+    colorbar_trace = go.Scatter(
+        x=[None]*len(labels_unique),
+        y=[None]*len(labels_unique),
+        mode='markers',
+        marker=dict(
+            color=list(range(len(labels_unique))),
+            colorscale=custom_colorscale,
+            size=20,
+            symbol='square',
+            colorbar=dict(
+                title='',
+                tickvals=list(range(len(labels_unique))),
+                ticktext=[f"{label}" for label in labels_unique],
+                lenmode='fraction',
+                len=1.0
+            )
+        ),
+        showlegend=False
+    )
+    fig.add_trace(colorbar_trace)
+
+    if show_plot:
+        fig.show(config={'scrollZoom': True})
+        return None, pipe
+    else:
+        return fig, pipe
+    
 # Other utility functions
 def model_weight_files(arch=resnet18, dataset='msld-v1', dir_path:Path=None):
     if dir_path is None: dir_path = ROOT / 'saved'
