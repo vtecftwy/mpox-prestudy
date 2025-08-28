@@ -171,3 +171,6 @@ saved/*
 nbs/*.html
 nbs/*/*.html
 nbs/*/*/*.html
+
+# nbs with private data
+nbs/PRIV*
