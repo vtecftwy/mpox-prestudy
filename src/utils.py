@@ -60,7 +60,17 @@ DATASETS = {
         'name': 'Mpox Dataset 2022:MPOX',
         'key': 'mpox-ds-2022:mpox',
         'path': ROOT / "data/Monkeypox-dataset-2022/Monkeypox"
-    }
+    },
+    'ipp-original':{
+        'name': 'IPP',
+        'key': 'ipp',
+        'path': ROOT / "data/ipp/original/Monkeypox"
+    },
+    'ipp-augmented':{
+        'name': 'IPP',
+        'key': 'ipp',
+        'path': ROOT / "data/ipp/augmented"
+    },
 }
 
 # COLORS = [
